@@ -69,14 +69,15 @@ end
 function evaluate(model, x, y; target, output_scaler)
 
     comparison = copy(y)
+    rename!(comparison, :next_radiation => :norm_next_radiation)
 
     comparison.next_radiation = inverse_transform(output_scaler, y[:, end])
-    comparison.predicted = inverse_transform(output_scaler, model(Array(x)')[1, :])
+    comparison.norm_predicted = model(Array(x)')[1, :]
+    comparison.predicted = inverse_transform(output_scaler, comparison.norm_predicted)
 
     @info first(comparison, 12)
-
-    #@info "MAE = $(mean(abs.(predictions .- real_values)))"
-    @info "MAE = $(Flux.Losses.mae(comparison.predicted, comparison.next_radiation))"
+    @info "MAE (rescaled) = $(Flux.Losses.mae(comparison.predicted, comparison.next_radiation))"
+    @info "MAE (normalized) = $(Flux.Losses.mae(comparison.norm_predicted, comparison.norm_next_radiation))"
 end
 
 

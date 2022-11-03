@@ -252,9 +252,9 @@ function prepare_processing_datasets(df::DataFrame; train_frac::Float64, valid_f
     )
 
     # converting sets to Float32 (best suited for GPU)
-#    for (key, artifact) in artifact_dict
-#        artifact_dict[key] = occursin(r"x|y", key) ? convert.(Float32, artifact) : artifact
-#    end
+    for (key, artifact) in artifact_dict
+        artifact_dict[key] = occursin(r"x|y", key) ? convert.(Float32, artifact) : artifact
+    end
 
     return artifact_dict
 end
@@ -262,33 +262,33 @@ end
 
 function main() :: Nothing
 
-#    # creating the necessary firectoies
-#    for dir in [ARTIFACT_DIR, DATA_DIR]
-#        !isdir(dir) && mkdir(dir)
-#    end
-#
-#    #
-#    # Download data
-#    #
-#
-#    @info "Initializing raw data download"
-#    download_raw_data(2010:2021, force_download = false)
-#
-#    @info "Concatenating all datafiles into one dataframe"
-#    df = gather_files(from = joinpath(DATA_DIR, "raw"))
-#    CSV.write(joinpath(DATA_DIR, "processed", "concatenated_data.csv"), df)
-#
-#    #
-#    # Data Pre-processing
-#    #
-#
-#    selected_station_ids = readlines(joinpath(DATA_DIR, "processed", "selected_station_ids.txt"))
-#    df = CSV.read(joinpath(DATA_DIR, "processed", "concatenated_data.csv"), DataFrame)
-#    df = filter(r -> r[:id] in selected_station_ids, df)
-#
-#    @info "Performing preprocessing operations"
-#    df = preprocess(df, interpolate = true)
-#    CSV.write(joinpath(DATA_DIR, "processed", "ready_dataframe.csv"), df)
+    # creating the necessary firectoies
+    for dir in [ARTIFACT_DIR, DATA_DIR]
+        !isdir(dir) && mkdir(dir)
+    end
+
+    #
+    # Download data
+    #
+
+    @info "Initializing raw data download"
+    download_raw_data(2010:2021, force_download = false)
+
+    @info "Concatenating all datafiles into one dataframe"
+    df = gather_files(from = joinpath(DATA_DIR, "raw"))
+    CSV.write(joinpath(DATA_DIR, "processed", "concatenated_data.csv"), df)
+
+    #
+    # Data Pre-processing
+    #
+
+    selected_station_ids = readlines(joinpath(DATA_DIR, "processed", "selected_station_ids.txt"))
+    df = CSV.read(joinpath(DATA_DIR, "processed", "concatenated_data.csv"), DataFrame)
+    df = filter(r -> r[:id] in selected_station_ids, df)
+
+    @info "Performing preprocessing operations"
+    df = preprocess(df, interpolate = true)
+    CSV.write(joinpath(DATA_DIR, "processed", "ready_dataframe.csv"), df)
 
     #
     # Train, validation and test set preparation
