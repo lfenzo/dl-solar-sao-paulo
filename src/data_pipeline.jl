@@ -113,10 +113,10 @@ function gather_files(; from::AbstractString) :: DataFrame
 
         # adding header infor
         header_info = process_datafile_header(joinpath(from, file))
-        df[!, :id] .= header_info["id"]
-        df[!, :lat] .= header_info["lat"]
-        df[!, :lon] .= header_info["lon"]
-        df[!, :alt] .= header_info["alt"]
+        df.id .= header_info["id"]
+        df.lat .= header_info["lat"]
+        df.lon .= header_info["lon"]
+        df.alt .= header_info["alt"]
 
         append!(all, df)
     end
@@ -130,8 +130,7 @@ function preprocess(df::DataFrame; interpolate::Bool = false) :: DataFrame
     ignore_features = ["doy", "hour", "id", "lat", "lon", "alt", "year"]
 
     # removing the trailing "A" in the IDs of each of the stations
-    transform!(df, :id => ByRow(id -> id[2:end]) => :id)
-    df[!, :id] .= parse.(Float32, df.id)
+    transform!(df, :id => ByRow(id -> parse(Float32, id[2:end])) => :id)
     
     # shifting target variable 1 step in time into the future (advanding in 1h)
     transform!(groupby(df, :id), :radiation .=> ShiftedArrays.lead .=> :next_radiation)
@@ -139,9 +138,9 @@ function preprocess(df::DataFrame; interpolate::Bool = false) :: DataFrame
     # removing observations out of daytime
     filter!(row -> Time(7) <= row["hour"] <= Time(19), df)
 
-    df[!, :doy] = dayofyear.(df[:, :date])
-    df[!, :hour] = hour.(df[:, :hour])
-    df[!, :year] = year.(df[:, :date])
+    df.doy = dayofyear.(df.date)
+    df.hour = dayofyear.(df.hour)
+    df.year = dayofyear.(df.year)
     select!(df, Not(:date))
 
     # converting -9999.0 to `missing`
@@ -159,9 +158,7 @@ function preprocess(df::DataFrame; interpolate::Bool = false) :: DataFrame
 
     if interpolate
         for group in groupby(df, [:id, :doy, :hour])
-            if nrow(group) > 2
-                Impute.substitute!(group)
-            end
+            nrow(group) > 2 && Impute.substitute!(group)
         end
     end
 
@@ -215,8 +212,8 @@ function prepare_processing_datasets(df::DataFrame; train_frac::Float64, valid_f
     sort!(test, [:id, :year, :doy, :hour])
 
     # splitting between data and target variables
-    data_cols = filter(n -> !(n in [target, :id]), names(df))
-    target_cols = [:id, :hour, :doy, :year, target]
+    data_cols = filter(n -> !(Symbol(n) in [target, :id]), names(df))
+    target_cols = [:id, :hour, :doy, :year, target]  # NOTE the order of the target
 
     xtrain = select(train, data_cols)
     ytrain = select(train, target_cols)
@@ -229,16 +226,19 @@ function prepare_processing_datasets(df::DataFrame; train_frac::Float64, valid_f
 
     # standardizers fitted only on train data...
     input_std_mach = fit!(machine(Standardizer(), xtrain))
-    output_std_mach = fit!(machine(Standardizer(features = [target]), ytrain))
+    output_std_mach = fit!(machine(Standardizer(), ytrain[:, target]))
 
-    norm_xtrain = Array(MLJ.transform(input_std_mach, xtrain))'
-    norm_ytrain = Array(MLJ.transform(output_std_mach, ytrain))'
+    norm_xtrain = MLJ.transform(input_std_mach, xtrain)
+    norm_ytrain = copy(ytrain)
+    norm_ytrain[!, target] = MLJ.transform(output_std_mach, ytrain[:, target])
 
-    norm_xvalid = Array(MLJ.transform(input_std_mach, xvalid))'
-    norm_yvalid = Array(MLJ.transform(output_std_mach, yvalid))'
+    norm_xvalid = MLJ.transform(input_std_mach, xvalid)
+    norm_yvalid = copy(yvalid)
+    norm_yvalid[!, target] = MLJ.transform(output_std_mach, yvalid[:, target])
 
-    norm_xtest = Array(MLJ.transform(input_std_mach, xtest))'
-    norm_ytest = Array(MLJ.transform(output_std_mach, ytest))'
+    norm_xtest = MLJ.transform(input_std_mach, xtest)
+    norm_ytest = copy(ytest)
+    norm_ytest[!, target] = MLJ.transform(output_std_mach, ytest[:, target])
 
     artifact_dict = Dict(
         "input_scaler" => input_std_mach,
@@ -252,9 +252,9 @@ function prepare_processing_datasets(df::DataFrame; train_frac::Float64, valid_f
     )
 
     # converting sets to Float32 (best suited for GPU)
-    for (key, artifact) in artifact_dict
-        artifact_dict[key] = occursin(r"x|y", key) ? convert.(Float32, artifact) : artifact
-    end
+#    for (key, artifact) in artifact_dict
+#        artifact_dict[key] = occursin(r"x|y", key) ? convert.(Float32, artifact) : artifact
+#    end
 
     return artifact_dict
 end
@@ -262,33 +262,33 @@ end
 
 function main() :: Nothing
 
-    # creating the necessary firectoies
-    for dir in [ARTIFACT_DIR, DATA_DIR]
-        !isdir(dir) && mkdir(dir)
-    end
-
-    #
-    # Download data
-    #
-
-    @info "Initializing raw data download"
-    download_raw_data(2010:2021, force_download = false)
-
-    @info "Concatenating all datafiles into one dataframe"
-    df = gather_files(from = joinpath(DATA_DIR, "raw"))
-    CSV.write(joinpath(DATA_DIR, "processed", "concatenated_data.csv"), df)
-
-    #
-    # Data Pre-processing
-    #
-
-    selected_station_ids = readlines(joinpath(DATA_DIR, "processed", "selected_station_ids.txt"))
-    df = CSV.read(joinpath(DATA_DIR, "processed", "concatenated_data.csv"), DataFrame)
-    df = filter(r -> r[:id] in selected_station_ids, df)
-
-    @info "Performing preprocessing operations"
-    df = preprocess(df, interpolate = true)
-    CSV.write(joinpath(DATA_DIR, "processed", "ready_dataframe.csv"), df)
+#    # creating the necessary firectoies
+#    for dir in [ARTIFACT_DIR, DATA_DIR]
+#        !isdir(dir) && mkdir(dir)
+#    end
+#
+#    #
+#    # Download data
+#    #
+#
+#    @info "Initializing raw data download"
+#    download_raw_data(2010:2021, force_download = false)
+#
+#    @info "Concatenating all datafiles into one dataframe"
+#    df = gather_files(from = joinpath(DATA_DIR, "raw"))
+#    CSV.write(joinpath(DATA_DIR, "processed", "concatenated_data.csv"), df)
+#
+#    #
+#    # Data Pre-processing
+#    #
+#
+#    selected_station_ids = readlines(joinpath(DATA_DIR, "processed", "selected_station_ids.txt"))
+#    df = CSV.read(joinpath(DATA_DIR, "processed", "concatenated_data.csv"), DataFrame)
+#    df = filter(r -> r[:id] in selected_station_ids, df)
+#
+#    @info "Performing preprocessing operations"
+#    df = preprocess(df, interpolate = true)
+#    CSV.write(joinpath(DATA_DIR, "processed", "ready_dataframe.csv"), df)
 
     #
     # Train, validation and test set preparation
@@ -303,6 +303,7 @@ function main() :: Nothing
         target = :next_radiation,
     )
 
+    @info "Saving produced artifacts..."
     FileIO.save(joinpath(ARTIFACT_DIR, "artifacts.jld2"), artifact_dict) 
 
     return nothing
