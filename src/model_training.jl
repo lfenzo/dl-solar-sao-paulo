@@ -11,8 +11,8 @@ using ProgressBars
 using BenchmarkTools
 
 
-const DATA_DIR = joinpath(pwd(), "..", "data")
 const ARTIFACT_DIR = joinpath(pwd(), "..", "artifacts")
+const MODEL_DIR = joinpath(pwd(), "..", "models")
 
 
 function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Bool) 
@@ -29,20 +29,23 @@ function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Boo
         device = gpu
     end
 
-    train_loader = Flux.DataLoader((xtrain, ytrain) |> device, batchsize = 128, shuffle = true)
-    valid_loader = Flux.DataLoader((xvalid, yvalid) |> device, batchsize = 128, shuffle = true)
+    train_loader = Flux.DataLoader((xtrain, ytrain) |> device, batchsize = 64, shuffle = true)
+    valid_loader = Flux.DataLoader((xvalid, yvalid) |> device, batchsize = 64, shuffle = true)
 
     model = Chain(
-        Dense(size(xtrain, 1) => 330, relu),
-        Dropout(0.4),
-        Dense(330 => 330, relu),
-        Dropout(0.4),
-        Dense(330 => 50, relu),
+        Dense(size(xtrain, 1) => 300, selu),
         Dropout(0.3),
-        Dense(50 => 1, identity),
+        BatchNorm(300),
+        Dense(300 => 300, selu),
+        Dropout(0.3),
+        BatchNorm(300),
+        Dense(300 => 100, selu),
+        Dropout(0.3),
+        BatchNorm(100),
+        Dense(100 => 1, identity),
     ) |> device
 
-    optimizer = Flux.Adam(0.0002)
+    optimizer = Flux.NAdam(0.0001)
     parameters = Flux.params(model)
 
     for epoch in 1:epochs
@@ -54,8 +57,7 @@ function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Boo
         epoch_train_loss = Flux.Losses.mse(model(xtrain), ytrain)
         epoch_valid_loss = Flux.Losses.mse(model(xvalid), yvalid)
 
-        @info "Epoch $epoch\n" *
-            "training loss \t$epoch_train_loss\n" *
+        @info "Epoch $epoch\n" * "training loss \t$epoch_train_loss\n" *
             "validation loss \t$epoch_valid_loss"
 
         push!(loss_train, epoch_train_loss)
@@ -92,11 +94,13 @@ function plot_loss_curves(loss_train::Vector, loss_valid::Vector)
     axs.xlabel = "Epochs"
     axs.ylabel = "Loss"
 
-    save("learning-curves-train-valid.pdf", fig)
+    save(joinpath(ARTIFACT_DIR, "learning-curves-train-valid.pdf"), fig)
 end
 
 
 function main()
+
+    !isdir(MODEL_DIR) && mkdir(MODEL_DIR)
 
     #
     # Loading training and validation data
@@ -106,8 +110,10 @@ function main()
     xtrain, ytrain = FileIO.load(joinpath(ARTIFACT_DIR, "artifacts.jld2"), "xtrain", "ytrain")
     xvalid, yvalid = FileIO.load(joinpath(ARTIFACT_DIR, "artifacts.jld2"), "xvalid", "yvalid")
 
-    xtrain = first(xtrain, 100_000)
-    ytrain = first(ytrain, 100_000)
+    xtest, ytest = FileIO.load(joinpath(ARTIFACT_DIR, "artifacts.jld2"), "xtest", "ytest")
+
+ #   xtrain = first(xtrain, 100_000)
+ #   ytrain = first(ytrain, 100_000)
 
     #
     # Loading the scaler objects
@@ -122,9 +128,7 @@ function main()
     #
 
     @info "Training with $(size(xtrain, 1)) samples"
-
-    epochs = 40
-    start_datestamp = Dates.now()
+    epochs = 110
 
     # removing the extra features for the Y sets (NOTE that the target feature is
     # garanteed to be the last feature, this is set in the data pipeline script)
@@ -137,11 +141,15 @@ function main()
         force_cpu = true,
     )
 
+    end_datestamp = Dates.format(Dates.now(), "Y-m-d-H-M")
+    @info "Saving the model model$end_datestamp.bson"
+    BSON.@save(joinpath(MODEL_DIR, "model_$end_datestamp.bson"), model)
+
     #
     # Preliminary model evaluation
     #
 
-    evaluate(model, xvalid, yvalid; output_scaler = target_transformer,)
+    evaluate(model, xtest, ytest; output_scaler = target_transformer)
 end
 
 
