@@ -139,8 +139,8 @@ function preprocess(df::DataFrame; interpolate::Bool = false) :: DataFrame
     filter!(row -> Time(7) <= row["hour"] <= Time(19), df)
 
     df.doy = dayofyear.(df.date)
-    df.hour = dayofyear.(df.hour)
-    df.year = dayofyear.(df.year)
+    df.hour = hour.(df.hour)
+    df.year = year.(df.date)
     select!(df, Not(:date))
 
     # converting -9999.0 to `missing`
@@ -230,15 +230,15 @@ function prepare_processing_datasets(df::DataFrame; train_frac::Float64, valid_f
 
     norm_xtrain = MLJ.transform(input_std_mach, xtrain)
     norm_ytrain = copy(ytrain)
-    norm_ytrain[!, target] = MLJ.transform(output_std_mach, ytrain[:, target])
+    norm_ytrain[!, "norm_$target"] = MLJ.transform(output_std_mach, ytrain[:, target])
 
     norm_xvalid = MLJ.transform(input_std_mach, xvalid)
     norm_yvalid = copy(yvalid)
-    norm_yvalid[!, target] = MLJ.transform(output_std_mach, yvalid[:, target])
+    norm_yvalid[!, "norm_$target"] = MLJ.transform(output_std_mach, yvalid[:, target])
 
     norm_xtest = MLJ.transform(input_std_mach, xtest)
     norm_ytest = copy(ytest)
-    norm_ytest[!, target] = MLJ.transform(output_std_mach, ytest[:, target])
+    norm_ytest[!, "norm_$target"] = MLJ.transform(output_std_mach, ytest[:, target])
 
     artifact_dict = Dict(
         "input_scaler" => input_std_mach,

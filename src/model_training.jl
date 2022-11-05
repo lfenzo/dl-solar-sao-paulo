@@ -29,20 +29,20 @@ function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Boo
         device = gpu
     end
 
-    train_loader = Flux.DataLoader((xtrain, ytrain) |> device, batchsize = 64, shuffle = true)
-    valid_loader = Flux.DataLoader((xvalid, yvalid) |> device, batchsize = 64, shuffle = true)
+    train_loader = Flux.DataLoader((xtrain, ytrain) |> device, batchsize = 128, shuffle = true)
+    valid_loader = Flux.DataLoader((xvalid, yvalid) |> device, batchsize = 128, shuffle = true)
 
     model = Chain(
-        Dense(size(xtrain, 1) => 500, relu),
-        Dropout(0.3),
-        Dense(500 => 500, relu),
-        Dropout(0.3),
-        Dense(500 => 50, relu),
+        Dense(size(xtrain, 1) => 330, relu),
+        Dropout(0.4),
+        Dense(330 => 330, relu),
+        Dropout(0.4),
+        Dense(330 => 50, relu),
         Dropout(0.3),
         Dense(50 => 1, identity),
     ) |> device
 
-    optimizer = Flux.RMSProp(0.00015)
+    optimizer = Flux.Adam(0.0002)
     parameters = Flux.params(model)
 
     for epoch in 1:epochs
@@ -60,18 +60,18 @@ function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Boo
 
         push!(loss_train, epoch_train_loss)
         push!(loss_valid, epoch_valid_loss)
+
+        plot_loss_curves(loss_train, loss_valid)
     end
 
     return cpu(model), loss_train, loss_valid
 end
 
 
-function evaluate(model, x, y; target, output_scaler)
+function evaluate(model, x, y; output_scaler)
 
     comparison = copy(y)
-    rename!(comparison, :next_radiation => :norm_next_radiation)
 
-    comparison.next_radiation = inverse_transform(output_scaler, y[:, end])
     comparison.norm_predicted = model(Array(x)')[1, :]
     comparison.predicted = inverse_transform(output_scaler, comparison.norm_predicted)
 
@@ -106,8 +106,8 @@ function main()
     xtrain, ytrain = FileIO.load(joinpath(ARTIFACT_DIR, "artifacts.jld2"), "xtrain", "ytrain")
     xvalid, yvalid = FileIO.load(joinpath(ARTIFACT_DIR, "artifacts.jld2"), "xvalid", "yvalid")
 
-    xtrain = xtrain[begin:10_000, :]
-    ytrain = ytrain[begin:10_000, :]
+    xtrain = first(xtrain, 100_000)
+    ytrain = first(ytrain, 100_000)
 
     #
     # Loading the scaler objects
@@ -123,16 +123,16 @@ function main()
 
     @info "Training with $(size(xtrain, 1)) samples"
 
-    epochs = 1
+    epochs = 40
     start_datestamp = Dates.now()
 
     # removing the extra features for the Y sets (NOTE that the target feature is
     # garanteed to be the last feature, this is set in the data pipeline script)
     @time model, loss_train, loss_valid = train(
         xtrain = Array(xtrain)',
-        ytrain = Array(ytrain[:, :next_radiation])',
+        ytrain = Array(ytrain[:, :norm_next_radiation])',
         xvalid = Array(xvalid)',
-        yvalid = Array(yvalid[:, :next_radiation])',
+        yvalid = Array(yvalid[:, :norm_next_radiation])',
         epochs = epochs,
         force_cpu = true,
     )
@@ -141,12 +141,7 @@ function main()
     # Preliminary model evaluation
     #
 
-    return evaluate(
-        model, xvalid, yvalid;
-        target = :next_radiation,
-        output_scaler = target_transformer,
-    )
-    plot_loss_curves(loss_train, loss_valid)
+    evaluate(model, xvalid, yvalid; output_scaler = target_transformer,)
 end
 
 
