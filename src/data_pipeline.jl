@@ -146,7 +146,7 @@ function preprocess(df::DataFrame; interpolate::Bool = false) :: DataFrame
     # converting -9999.0 to `missing`
     df = Impute.declaremissings(df; values = [-9999.0])
 
-    # converting absurd values to `missing`s
+    # converting absurd values to `missing`s (values that should not be smaller than zero)
     zero_absurd_features = filter(feature -> !(feature in ignore_features), names(df))
 
     for feature in zero_absurd_features
@@ -170,24 +170,24 @@ function preprocess(df::DataFrame; interpolate::Bool = false) :: DataFrame
     # feature-specific odd value handling
     #
 
-    # [pressure] keeping values between [850, 1000]
-    filter!(row -> 850 <= row.pressure <= 1000, df)
-    filter!(row -> 850 <= row.pressure_max <= 1000, df)
-    filter!(row -> 850 <= row.pressure_min <= 1000, df)
+    filter!(row -> 800 <= row.pressure <= 1100, df)
+    filter!(row -> 800 <= row.pressure_max <= 1100, df)
+    filter!(row -> 800 <= row.pressure_min <= 1100, df)
 
-    # [precip]
     filter!(row -> row.precip <= 5, df)
 
-    # [radiation]
     filter!(row -> row[:radiation] < 4000, df)
-
-    sort!(df, [:year, :doy], rev = [true, false])
 
     return df
 end
 
 
-function prepare_processing_datasets(df::DataFrame; train_frac::Float64, valid_frac::Float64, target::Symbol)
+function prepare_processing_datasets(df::DataFrame; sample_thresh::Integer, train_frac::Float64, valid_frac::Float64, target::Symbol)
+
+    # selecting the stations with at least 'sample_thresh' samples for training
+    nrows_by_id = combine(groupby(df, :id), nrow)
+    valid_ids = filter(g -> g[:nrow] >= sample_thresh, nrows_by_id)[:, :id]
+    filter!(r -> r[:id] in valid_ids, df)
 
     train = DataFrame()
     valid = DataFrame()
@@ -200,16 +200,14 @@ function prepare_processing_datasets(df::DataFrame; train_frac::Float64, valid_f
 
     # selecting partitioning data between the training, test and validation sets
     for group in groupby(df, :id)
+        sort!(group, [:year, :doy, :hour])
+
         group_train, group_valid, group_test = MLJ.partition(group, train_frac, valid_frac) 
+
         append!(train, group_train)
         append!(valid, group_valid)
         append!(test, group_test)
     end
-
-    # shuffling the traing set, but sorting the validation and test for later evaluation
-    shuffle!(train)
-    sort!(valid, [:id, :year, :doy, :hour])
-    sort!(test, [:id, :year, :doy, :hour])
 
     # splitting between data and target variables
     data_cols = filter(n -> !(Symbol(n) in [target, :id]), names(df))
@@ -282,9 +280,7 @@ function main() :: Nothing
     # Data Pre-processing
     #
 
-    selected_station_ids = readlines(joinpath(DATA_DIR, "processed", "selected_station_ids.txt"))
     df = CSV.read(joinpath(DATA_DIR, "processed", "concatenated_data.csv"), DataFrame)
-    df = filter(r -> r[:id] in selected_station_ids, df)
 
     @info "Performing preprocessing operations"
     df = preprocess(df, interpolate = true)
@@ -298,6 +294,7 @@ function main() :: Nothing
 
     @info "Splitting data into Training, Validation and Test sets"
     artifact_dict = prepare_processing_datasets(df;
+        sample_thresh = 10_000,
         train_frac = 0.7,
         valid_frac = 0.15,
         target = :next_radiation,
