@@ -42,7 +42,9 @@ end
 function site_specific_evaluation(data::DataFrame) :: Nothing
     mae = combine(groupby(data, :id), [:next_radiation, :predicted] => Flux.Losses.mae => :mae)
     rmse = combine(groupby(data, :id), [:next_radiation, :predicted] => ((a, b) -> sqrt(Flux.Losses.mse(a, b))) => :rmse)
-    @info innerjoin(mae, rmse; on = :id)
+    nsamples = combine(groupby(data, :id), nrow => :nsamples)
+
+    @info innerjoin(mae, rmse, nsamples; on = :id)
 end
 
 

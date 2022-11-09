@@ -9,10 +9,33 @@ using DataFrames
 using CairoMakie
 using ProgressBars
 using BenchmarkTools
+using ParameterSchedulers
+
+using ParameterSchedulers: Scheduler
 
 
 const ARTIFACT_DIR = joinpath(pwd(), "..", "artifacts")
 const MODEL_DIR = joinpath(pwd(), "..", "models")
+
+
+function build_model(; input_size::Integer, output_size::Integer) :: Chain
+    return Chain(
+
+        Dense(input_size => 300, selu),
+        Dropout(0.3),
+        BatchNorm(300),
+
+        Dense(300 => 300, selu),
+        Dropout(0.3),
+        BatchNorm(300),
+
+        Dense(300 => 100, selu),
+        Dropout(0.3),
+        BatchNorm(100),
+
+        Dense(100 => output_size, identity),
+    )
+end
 
 
 function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Bool) 
@@ -29,35 +52,37 @@ function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Boo
         device = gpu
     end
 
-    train_loader = Flux.DataLoader((xtrain, ytrain) |> device, batchsize = 64, shuffle = true)
-    valid_loader = Flux.DataLoader((xvalid, yvalid) |> device, batchsize = 64, shuffle = true)
+    batchsize = 64
 
-    model = Chain(
-        Dense(size(xtrain, 1) => 300, selu),
-        Dropout(0.3),
-        BatchNorm(300),
-        Dense(300 => 300, selu),
-        Dropout(0.3),
-        BatchNorm(300),
-        Dense(300 => 100, selu),
-        Dropout(0.3),
-        BatchNorm(100),
-        Dense(100 => 1, identity),
+    train_loader = Flux.DataLoader((xtrain, ytrain) |> device; batchsize = batchsize, shuffle = true)
+    valid_loader = Flux.DataLoader((xvalid, yvalid) |> device; batchsize = batchsize, shuffle = true)
+
+    model = build_model(
+        input_size = size(xtrain, 1),
+        output_size = size(ytrain, 1)
     ) |> device
 
-    optimizer = Flux.NAdam(0.0001)
     parameters = Flux.params(model)
+    optimizer = NAdam()
+    learning_rate_scheduler = ParameterSchedulers.Exp(
+        λ = 0.005,
+        γ = 0.94,
+    )
 
-    for epoch in 1:epochs
+    for (epoch, lr) in zip(1:epochs, learning_rate_scheduler)
+
+        optimizer.eta = lr  # updating the llearning rate based on the scheduler
+
         for ((xtr, ytr), (xval, yval)) in ProgressBar(zip(train_loader, valid_loader))
             grads = gradient(() -> Flux.Losses.mse(model(xtr), ytr), parameters)
-            Flux.Optimise.update!(optimizer, parameters, grads)
+            Flux.update!(optimizer, parameters, grads)
         end
 
         epoch_train_loss = Flux.Losses.mse(model(xtrain), ytrain)
         epoch_valid_loss = Flux.Losses.mse(model(xvalid), yvalid)
 
-        @info "Epoch $epoch\n" * "training loss \t$epoch_train_loss\n" *
+        @info "Epoch $epoch | Learning Rate: $(optimizer.eta)\n" *
+            "training loss \t$epoch_train_loss\n" *
             "validation loss \t$epoch_valid_loss"
 
         push!(loss_train, epoch_train_loss)
@@ -109,11 +134,7 @@ function main()
     @info "Loading validation and training data"
     xtrain, ytrain = FileIO.load(joinpath(ARTIFACT_DIR, "artifacts.jld2"), "xtrain", "ytrain")
     xvalid, yvalid = FileIO.load(joinpath(ARTIFACT_DIR, "artifacts.jld2"), "xvalid", "yvalid")
-
     xtest, ytest = FileIO.load(joinpath(ARTIFACT_DIR, "artifacts.jld2"), "xtest", "ytest")
-
- #   xtrain = first(xtrain, 100_000)
- #   ytrain = first(ytrain, 100_000)
 
     #
     # Loading the scaler objects
@@ -128,7 +149,7 @@ function main()
     #
 
     @info "Training with $(size(xtrain, 1)) samples"
-    epochs = 110
+    epochs = 50
 
     # removing the extra features for the Y sets (NOTE that the target feature is
     # garanteed to be the last feature, this is set in the data pipeline script)
