@@ -11,29 +11,28 @@ using ProgressBars
 using BenchmarkTools
 using ParameterSchedulers
 
-using ParameterSchedulers: Scheduler
-
 
 const ARTIFACT_DIR = joinpath(pwd(), "..", "artifacts")
 const MODEL_DIR = joinpath(pwd(), "..", "models")
+const PLOT_DIR = joinpath(ARTIFACT_DIR, "learning_curves")
 
 
 function build_model(; input_size::Integer, output_size::Integer) :: Chain
     return Chain(
 
-        Dense(input_size => 300, selu),
-        Dropout(0.3),
+        Dense(input_size => 400, selu),
+        Dropout(0.30),
+        BatchNorm(400),
+
+        Dense(400 => 300, selu),
+        Dropout(0.30),
         BatchNorm(300),
 
-        Dense(300 => 300, selu),
-        Dropout(0.3),
-        BatchNorm(300),
+        Dense(300 => 200, selu),
+        Dropout(0.30),
+        BatchNorm(200),
 
-        Dense(300 => 100, selu),
-        Dropout(0.3),
-        BatchNorm(100),
-
-        Dense(100 => output_size, identity),
+        Dense(200 => output_size, identity),
     )
 end
 
@@ -63,10 +62,10 @@ function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Boo
     ) |> device
 
     parameters = Flux.params(model)
-    optimizer = NAdam()
+    optimizer = Adam()
     learning_rate_scheduler = ParameterSchedulers.Exp(
-        λ = 0.005,
-        γ = 0.94,
+        λ = 0.003,
+        γ = 0.95,
     )
 
     for (epoch, lr) in zip(1:epochs, learning_rate_scheduler)
@@ -75,7 +74,7 @@ function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Boo
 
         for ((xtr, ytr), (xval, yval)) in ProgressBar(zip(train_loader, valid_loader))
             grads = gradient(() -> Flux.Losses.mse(model(xtr), ytr), parameters)
-            Flux.update!(optimizer, parameters, grads)
+            Flux.Optimise.update!(optimizer, parameters, grads)
         end
 
         epoch_train_loss = Flux.Losses.mse(model(xtrain), ytrain)
@@ -108,23 +107,31 @@ function evaluate(model, x, y; output_scaler)
 end
 
 
-function plot_loss_curves(loss_train::Vector, loss_valid::Vector)
+function plot_loss_curves(loss_train::Vector, loss_valid::Vector, model = nothing)
     fig = Figure()
-    axs = Axis(fig[1, 1])
+    axs = Axis(
+        fig[1, 1];
+        xlabel = "Epochs",
+        ylabel = "Loss",
+    )
     
     lines!(axs, loss_train, label = "Train")
     lines!(axs, loss_valid, label = "Valid")
-
     axislegend()
-    axs.xlabel = "Epochs"
-    axs.ylabel = "Loss"
 
-    save(joinpath(ARTIFACT_DIR, "learning-curves-train-valid.pdf"), fig)
+    if model !== nothing
+        save(joinpath(PLOT_DIR, "$model.pdf"), fig)
+    else
+        save(joinpath(ARTIFACT_DIR, "learning_curves_last_model.pdf"), fig)
+    end
+
+    return fig
 end
 
 
 function main()
 
+    !isdir(PLOT_DIR) && mkdir(PLOT_DIR)
     !isdir(MODEL_DIR) && mkdir(MODEL_DIR)
 
     #
@@ -149,7 +156,7 @@ function main()
     #
 
     @info "Training with $(size(xtrain, 1)) samples"
-    epochs = 50
+    epochs = 20
 
     # removing the extra features for the Y sets (NOTE that the target feature is
     # garanteed to be the last feature, this is set in the data pipeline script)
@@ -163,8 +170,13 @@ function main()
     )
 
     end_datestamp = Dates.format(Dates.now(), "Y-m-d-H-M")
-    @info "Saving the model model$end_datestamp.bson"
-    BSON.@save(joinpath(MODEL_DIR, "model_$end_datestamp.bson"), model)
+    model_name = "model_$end_datestamp"
+
+    @info "Saving the model $(model_name).bson"
+    BSON.@save(joinpath(MODEL_DIR, "$(model_name).bson"), model)
+
+    @info "Saving the model learning curves in $(model_name).pdf"
+    plot_loss_curves(loss_train, loss_valid, "$(model_name).pdf")
 
     #
     # Preliminary model evaluation
