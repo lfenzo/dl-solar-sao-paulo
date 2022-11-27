@@ -13,6 +13,7 @@ using Random
 using StatsBase: sample
 
 const DATA_DIR = joinpath(pwd(), "..", "data")
+const PROCESSED_DATA_DIR = joinpath(DATA_DIR, "processed")
 const ARTIFACT_DIR = joinpath(pwd(), "..", "artifacts")
 
 
@@ -32,7 +33,7 @@ function download_raw_data(year_range::UnitRange{Int64}; force_download::Bool = 
     !isdir(extract_dir) && mkdir(extract_dir)
     !isdir(zip_dir) && mkdir(zip_dir)
 
-    for year in year_range
+    Threads.@threads for year in year_range
         if force_download || !("$year.zip" in readdir("../data/zip"))
             @info "Downloading $year ... "
             Downloads.download("$baseurl/$year.zip", "$zip_dir/$year.zip")
@@ -42,8 +43,8 @@ function download_raw_data(year_range::UnitRange{Int64}; force_download::Bool = 
     end
 
     # TODO regex missing here
-    #run(`unzip -jo ../data/zip/\*.zip "*/INMET_SE_SP_*" -d ../data/raw/`)
-    #run(`unzip -jo ../data/zip/\*.zip "INMET_SE_SP_*" -d ../data/raw/`)
+#    run(`unzip -jo ../data/zip/\*.zip "*/INMET_SE_SP_*" -d ../data/raw/`)
+#    run(`unzip -jo ../data/zip/\*.zip "INMET_SE_SP_*" -d ../data/raw/`)
 end
 
 
@@ -258,10 +259,10 @@ function prepare_processing_datasets(df::DataFrame; sample_thresh::Integer, trai
 end
 
 
-function main() :: Nothing
+function main()
 
     # creating the necessary firectoies
-    for dir in [ARTIFACT_DIR, DATA_DIR]
+    for dir in [ARTIFACT_DIR, DATA_DIR, PROCESSED_DATA_DIR]
         !isdir(dir) && mkdir(dir)
     end
 
