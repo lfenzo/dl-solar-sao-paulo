@@ -34,8 +34,8 @@ end
 
 
 function general_evaluation(data::DataFrame) :: Nothing
-    @info "MAE: " * Flux.Losses.mae(data.next_radiation, data.predicted)
-    @info "RMSE: " * sqrt(Flux.Losses.mse(data.next_radiation, data.predicted))
+    @info "MAE: " * string(Flux.Losses.mae(data.next_radiation, data.predicted))
+    @info "RMSE: " * string(sqrt(Flux.Losses.mse(data.next_radiation, data.predicted)))
 end
 
 
@@ -47,8 +47,8 @@ function site_specific_evaluation(data::DataFrame) :: Nothing
     comparison = innerjoin(mae, rmse, nsamples; on = :id)
 
     @info comparison
-    @info "Standard Deviation (RMSE)" * std(comparison[:, :rmse])
-    @info "Standard Deviation (MAE)" * std(comparison[:, :mae])
+    @info "Standard Deviation (RMSE) " * string(std(comparison[:, :mae]))
+    @info "Standard Deviation (MAE) " * string(std(comparison[:, :rmse])) 
 end
 
 
