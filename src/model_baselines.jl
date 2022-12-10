@@ -124,7 +124,9 @@ function fit!(baseline::PreviousDay, X::DataFrame) :: Nothing
 
         # now that every day worth of observations has the exact same number of hours
         # we can safely shift the values for the radiation
-        filled_df[!, :baseline] = ShiftedArrays.lag(filled_df.next_radiation, 24)
+        # NOTE that here we are shifting 23 hours (not 24) because we heed to the the radiation
+        # in the *next hour*
+        filled_df[!, :baseline] = ShiftedArrays.lag(filled_df.next_radiation, 23)
 
         # inserting back the :id column not present in `fulldate_df`
         filled_df[!, :id] .= first(site.id)
