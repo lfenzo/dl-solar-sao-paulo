@@ -17,18 +17,32 @@ const MODEL_DIR = joinpath(pwd(), "..", "models")
 const PLOT_DIR = joinpath(ARTIFACT_DIR, "learning_curves")
 
 
+"""
+    build_model(; input_size::Integer, output_size::Integer) :: Chain
+
+Build a sequential Dense Neural Network having `input_size` input neurons and `output_size` output
+neurons. 
+"""
 function build_model(; input_size::Integer, output_size::Integer) :: Chain
     return Chain(
 
-        Dense(input_size => 400, selu),
+        Dense(input_size => 400, relu),
         Dropout(0.30),
         BatchNorm(400),
 
-        Dense(400 => 300, selu),
+        Dense(400 => 400, relu),
+        Dropout(0.30),
+        BatchNorm(400),
+
+        Dense(400 => 300, relu),
         Dropout(0.30),
         BatchNorm(300),
 
-        Dense(300 => 200, selu),
+        Dense(300 => 300, relu),
+        Dropout(0.30),
+        BatchNorm(300),
+
+        Dense(300 => 200, relu),
         Dropout(0.30),
         BatchNorm(200),
 
@@ -37,32 +51,56 @@ function build_model(; input_size::Integer, output_size::Integer) :: Chain
 end
 
 
-function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Bool) 
+function loss_metrics(model::Chain, loader, device)
+    mse = 0.0
+    m = 0
+    for (x, y) in loader
+        x, y = device(x), device(y)
+        mse += Flux.Losses.mse(model(x), y) 
+        m += size(x)[end]
+    end
+    return mse / m
+end
+
+
+"""
+    train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Bool)
+
+Train a neural network with the dat in `xtrain` and `ytrain` for a total of `epochs` epochs. During
+the fitting process both `xvalid` and `yvalid` are used to assess the quality of convergence.
+Optinally use `use_gpu = true` to force the training in the GPU (if available).
+
+# Returns
+
+A tuple with 3 elements:
+1. the trained model
+2. a vector with per-epoch values for the training data loss
+3. a vector with per-epoch values for the validation data loss
+"""
+function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, use_gpu::Bool) 
 
     loss_train = Vector{Float32}()
     loss_valid = Vector{Float32}()
 
-    if force_cpu || !CUDA.functional()
-        @info "Training on CPU"
-        device = cpu
-    else
-        @info "Training on GPU"
+    if use_gpu && CUDA.functional()
         CUDA.reclaim()
         device = gpu
+    else
+        device = cpu
     end
 
-    batchsize = 64
+    batchsize = 256
 
-    train_loader = Flux.DataLoader((xtrain, ytrain) |> device; batchsize = batchsize, shuffle = true)
-    valid_loader = Flux.DataLoader((xvalid, yvalid) |> device; batchsize = batchsize, shuffle = true)
+    train_loader = Flux.DataLoader((xtrain, ytrain), batchsize = batchsize, shuffle = true)
+    valid_loader = Flux.DataLoader((xvalid, yvalid), batchsize = batchsize)
 
     model = build_model(
         input_size = size(xtrain, 1),
         output_size = size(ytrain, 1)
     ) |> device
 
-    parameters = Flux.params(model)
     optimizer = Adam()
+    parameters = Flux.params(model)
     learning_rate_scheduler = ParameterSchedulers.Exp(
         λ = 0.003,
         γ = 0.95,
@@ -72,13 +110,14 @@ function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Boo
 
         optimizer.eta = lr  # updating the llearning rate based on the scheduler
 
-        for ((xtr, ytr), (xval, yval)) in ProgressBar(zip(train_loader, valid_loader))
-            grads = gradient(() -> Flux.Losses.mse(model(xtr), ytr), parameters)
+        for (xtr, ytr) in ProgressBar(train_loader)
+            x, y = device(xtr), device(ytr)
+            grads = gradient(() -> Flux.Losses.mse(model(x), y), parameters)
             Flux.Optimise.update!(optimizer, parameters, grads)
         end
 
-        epoch_train_loss = Flux.Losses.mse(model(xtrain), ytrain)
-        epoch_valid_loss = Flux.Losses.mse(model(xvalid), yvalid)
+        epoch_train_loss = loss_metrics(model, train_loader, device)
+        epoch_valid_loss = loss_metrics(model, valid_loader, device)
 
         @info "Epoch $epoch | Learning Rate: $(optimizer.eta)\n" *
             "training loss \t$epoch_train_loss\n" *
@@ -94,19 +133,31 @@ function train(; xtrain, ytrain, xvalid, yvalid, epochs::Integer, force_cpu::Boo
 end
 
 
+"""
+    evaluate(model, x, y; output_scaler)
+
+Evaluate some model `model` using the input data in `x` by comparing its output to `y`. Since
+the de-normalization operation has to be carried out, a `output_scaler` must also be specified.
+"""
 function evaluate(model, x, y; output_scaler)
-
     comparison = copy(y)
-
     comparison.norm_predicted = model(Array(x)')[1, :]
     comparison.predicted = inverse_transform(output_scaler, comparison.norm_predicted)
 
     @info first(comparison, 12)
-    @info "MAE (rescaled) = $(Flux.Losses.mae(comparison.predicted, comparison.next_radiation))"
-    @info "MAE (normalized) = $(Flux.Losses.mae(comparison.norm_predicted, comparison.norm_next_radiation))"
+    @info "MAE (rescaled) = " *
+        string(Flux.Losses.mae(comparison.predicted, comparison.next_radiation))
+    @info "MAE (normalized) = " *
+        string(Flux.Losses.mae(comparison.norm_predicted, comparison.norm_next_radiation))
 end
 
 
+"""
+    plot_loss_curves(loss_train::Vector, loss_valid::Vector, model = nothing)
+
+Plot the learning curves of some `model` using the per-epoch values of the `loss_train` and the
+`valid_train` in a line-chart.
+"""
 function plot_loss_curves(loss_train::Vector, loss_valid::Vector, model = nothing)
     fig = Figure()
     axs = Axis(
@@ -147,8 +198,7 @@ function main()
     # Loading the scaler objects
     #
 
-    @info "Loading scaler objects for input and output data"
-    data_transformer = FileIO.load(joinpath(ARTIFACT_DIR, "artifacts.jld2"), "input_scaler") 
+    @info "Loading scaler objects for output data"
     target_transformer = FileIO.load(joinpath(ARTIFACT_DIR, "artifacts.jld2"), "output_scaler") 
 
     #
@@ -156,17 +206,15 @@ function main()
     #
 
     @info "Training with $(size(xtrain, 1)) samples"
-    epochs = 20
+    epochs = 10
 
-    # removing the extra features for the Y sets (NOTE that the target feature is
-    # garanteed to be the last feature, this is set in the data pipeline script)
     @time model, loss_train, loss_valid = train(
-        xtrain = Array(xtrain)',
-        ytrain = Array(ytrain[:, :norm_next_radiation])',
-        xvalid = Array(xvalid)',
-        yvalid = Array(yvalid[:, :norm_next_radiation])',
+        xtrain = Array(permutedims(xtrain)),
+        ytrain = Array(permutedims(ytrain[:, :norm_next_radiation])),
+        xvalid = Array(permutedims(xvalid)),
+        yvalid = Array(permutedims(yvalid[:, :norm_next_radiation])),
         epochs = epochs,
-        force_cpu = true,
+        use_gpu = true,
     )
 
     end_datestamp = Dates.format(Dates.now(), "Y-m-d-H-M")
