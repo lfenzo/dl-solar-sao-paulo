@@ -2,7 +2,7 @@
 
 This project implements the training and evaluation processes of Multi-Layer Perceptrons to perform short-term solar radiation forecasting from
 meteorological data (from the data available, forecasting is performed for values 1h in the future). This implementation also comprehends the data preparation pipeline, from the zipped raw data download from the [National Institute of Meteorology of Brazil](https://portal.inmet.gov.br/dadoshistoricos) to the normalization process, the basic evaluation infrastructure
-and a few model baselines to be beat.
+and a few model baselines to be beaten.
 
 The main objective of this project is to compare the performance of a single neural network fitted in data from geographically diverse data-collection sites against the performance of multi-layer machine learning ensembles fitted with site-specific data (i.e. one fitted model per data-collection site).
 
